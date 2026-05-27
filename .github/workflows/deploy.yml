@@ -32,17 +32,19 @@ jobs:
 
       - name: Build & Push Backend Ventas
         run: |
-          # Se respeta la ruta del contexto y el Dockerfile descritos en tu docker-compose
-          docker build -t $ECR_REGISTRY/backend-venta:latest -f ./back-Ventas_SpringBoot/Dockerfile ./back-Ventas_SpringBoot/Springboot-API-REST
+          # Actualizamos la ruta para apuntar dentro de la subcarpeta Springboot-API-REST
+          docker build -t $ECR_REGISTRY/backend-venta:latest -f ./back-Ventas_SpringBoot/Springboot-API-REST/Dockerfile ./back-Ventas_SpringBoot/Springboot-API-REST
           docker push $ECR_REGISTRY/backend-venta:latest
 
       - name: Build & Push Backend Despachos
         run: |
-          docker build -t $ECR_REGISTRY/backend-despa:latest -f ./back-Despachos_SpringBoot/Dockerfile ./back-Despachos_SpringBoot/Springboot-API-REST-DESPACHO
+          # Asumiendo que la estructura es similar para Despachos
+          docker build -t $ECR_REGISTRY/backend-despa:latest -f ./back-Despachos_SpringBoot/Springboot-API-REST-DESPACHO/Dockerfile ./back-Despachos_SpringBoot/Springboot-API-REST-DESPACHO
           docker push $ECR_REGISTRY/backend-despa:latest
 
       - name: Build & Push Frontend
         run: |
+          # Este parece estar correcto según tu imagen, directo en la raíz de front_despacho
           docker build -t $ECR_REGISTRY/frontend:latest -f ./front_despacho/Dockerfile ./front_despacho
           docker push $ECR_REGISTRY/frontend:latest
 
