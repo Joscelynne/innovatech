@@ -20,7 +20,7 @@ services:
   backend-ventas:
     build:
       # CRÍTICO: El contexto debe ser la subcarpeta interna donde están el pom.xml y el src
-      context: ./back-Ventas_SpringBoot\Springboot-API-REST
+      context: ./back-Ventas_SpringBoot/Springboot-API-REST
       dockerfile: ./Dockerfile # Busca el Dockerfile que está una carpeta más arriba
     container_name: back-ventas
     restart: always
@@ -38,7 +38,7 @@ services:
   # Backend Despachos (Asumiendo que tiene la misma estructura)
   backend-despachos:
     build:
-      context: ./back-Despachos_SpringBoot\Springboot-API-REST-DESPACHO
+      context: ./back-Despachos_SpringBoot/Springboot-API-REST-DESPACHO
       dockerfile: ./Dockerfile
     container_name: back-despachos
     restart: always
