@@ -127,7 +127,7 @@ jobs:
           EOF
 
           # Transformamos el script en un JSON seguro para inyectarlo en AWS CLI
-          jq -n --arg script "$(cat deploy_backend.sh)" '{"commands": [$script]}' > ssm_input.json
+          jq -n --arg script "$(cat deploy_backend.sh)" '{"Parameters": {"commands": [$script]}}' > ssm_input.json
           
           # Enviamos el comando a la instancia a través del CLI de AWS
           aws ssm send-command \
@@ -171,7 +171,7 @@ jobs:
           docker compose up -d
           EOF
 
-          jq -n --arg script "$(cat deploy_frontend.sh)" '{"commands": [$script]}' > ssm_input.json
+          jq -n --arg script "$(cat deploy_frontend.sh)" '{"Parameters": {"commands": [$script]}}' > ssm_input.json
           
           aws ssm send-command \
             --instance-ids "${{ secrets.ID_FRONTEND }}" \
