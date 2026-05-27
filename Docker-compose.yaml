@@ -21,7 +21,7 @@ services:
     build:
       # CRÍTICO: El contexto debe ser la subcarpeta interna donde están el pom.xml y el src
       context: ./back-Ventas_SpringBoot/Springboot-API-REST
-      dockerfile: ./Dockerfile # Busca el Dockerfile que está una carpeta más arriba
+      dockerfile: Dockerfile # Busca el Dockerfile que está una carpeta más arriba
     container_name: back-ventas
     restart: always
     ports:
