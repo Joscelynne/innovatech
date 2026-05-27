@@ -1,0 +1,177 @@
+name: CI/CD AWS ECR & EC2 Deployment
+
+on:
+  push:
+    branches:
+      - deploy # Ejecuta el pipeline al hacer push a la rama deploy
+  workflow_dispatch: # Permite ejecución manual desde GitHub Actions
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_REGISTRY: 861457109307.dkr.ecr.us-east-1.amazonaws.com
+
+jobs:
+  build-and-push:
+    name: 1, 2 & 3. Build & Push a ECR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Configurar credenciales de AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login en Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & Push Backend Ventas
+        run: |
+          # Se respeta la ruta del contexto y el Dockerfile descritos en tu docker-compose
+          docker build -t $ECR_REGISTRY/backend-venta:latest -f ./back-Ventas_SpringBoot/Dockerfile ./back-Ventas_SpringBoot/Springboot-API-REST
+          docker push $ECR_REGISTRY/backend-venta:latest
+
+      - name: Build & Push Backend Despachos
+        run: |
+          docker build -t $ECR_REGISTRY/backend-despa:latest -f ./back-Despachos_SpringBoot/Dockerfile ./back-Despachos_SpringBoot/Springboot-API-REST-DESPACHO
+          docker push $ECR_REGISTRY/backend-despa:latest
+
+      - name: Build & Push Frontend
+        run: |
+          docker build -t $ECR_REGISTRY/frontend:latest -f ./front_despacho/Dockerfile ./front_despacho
+          docker push $ECR_REGISTRY/frontend:latest
+
+  deploy-backend:
+    name: 4 & 5. Despliegue en EC2 Backend (DB + Backends)
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configurar credenciales de AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Ejecutar despliegue vía AWS CLI (SSM)
+        run: |
+          # Creamos el script que se ejecutará dentro de la instancia EC2
+          cat << 'EOF' > deploy_backend.sh
+          #!/bin/bash
+          aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 861457109307.dkr.ecr.us-east-1.amazonaws.com
+          mkdir -p /home/ec2-user/deploy-backend && cd /home/ec2-user/deploy-backend
+          
+          # Generamos un docker-compose exclusivo para este servidor
+          cat << 'YML' > docker-compose.yml
+          version: '3.8'
+          services:
+            db-mysql:
+              image: mysql:8.0
+              container_name: innovatech-db
+              restart: always
+              environment:
+                - MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}
+                - MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}
+                - MYSQL_USER=${{ secrets.MYSQL_APP_USER }}
+                - MYSQL_PASSWORD=${{ secrets.MYSQL_APP_PASSWORD }}
+              ports:
+                - "3306:3306"
+              volumes:
+                - db_data:/var/lib/mysql
+            
+            backend-ventas:
+              image: 861457109307.dkr.ecr.us-east-1.amazonaws.com/backend-venta:latest
+              container_name: back-ventas
+              restart: always
+              ports:
+                - "8080:8080"
+              environment:
+                - DB_ENDPOINT=db-mysql
+                - DB_PORT=3306
+                - DB_NAME=${{ secrets.MYSQL_DATABASE }}
+                - DB_USERNAME=${{ secrets.MYSQL_APP_USER }}
+                - DB_PASSWORD=${{ secrets.MYSQL_APP_PASSWORD }}
+              depends_on:
+                - db-mysql
+
+            backend-despachos:
+              image: 861457109307.dkr.ecr.us-east-1.amazonaws.com/backend-despa:latest
+              container_name: back-despachos
+              restart: always
+              ports:
+                - "8081:8081"
+              environment:
+                - DB_ENDPOINT=db-mysql
+                - DB_PORT=3306
+                - DB_NAME=${{ secrets.MYSQL_DATABASE }}
+                - DB_USERNAME=${{ secrets.MYSQL_APP_USER }}
+                - DB_PASSWORD=${{ secrets.MYSQL_APP_PASSWORD }}
+              depends_on:
+                - db-mysql
+
+          volumes:
+            db_data:
+          YML
+          
+          docker compose down
+          docker compose pull
+          docker compose up -d
+          EOF
+
+          # Transformamos el script en un JSON seguro para inyectarlo en AWS CLI
+          jq -n --arg script "$(cat deploy_backend.sh)" '{"commands": [$script]}' > ssm_input.json
+          
+          # Enviamos el comando a la instancia a través del CLI de AWS
+          aws ssm send-command \
+            --instance-ids "${{ secrets.ID_BACKEND }}" \
+            --document-name "AWS-RunShellScript" \
+            --cli-input-json file://ssm_input.json
+
+  deploy-frontend:
+    name: 4 & 6. Despliegue en EC2 Frontend (Solo Front)
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configurar credenciales de AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Ejecutar despliegue vía AWS CLI (SSM)
+        run: |
+          cat << 'EOF' > deploy_frontend.sh
+          #!/bin/bash
+          aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 861457109307.dkr.ecr.us-east-1.amazonaws.com
+          mkdir -p /home/ec2-user/deploy-frontend && cd /home/ec2-user/deploy-frontend
+          
+          cat << 'YML' > docker-compose.yml
+          version: '3.8'
+          services:
+            frontend-app:
+              image: 861457109307.dkr.ecr.us-east-1.amazonaws.com/frontend:latest
+              container_name: front-app
+              restart: always
+              ports:
+                - "80:80"
+          YML
+          
+          docker compose down
+          docker compose pull
+          docker compose up -d
+          EOF
+
+          jq -n --arg script "$(cat deploy_frontend.sh)" '{"commands": [$script]}' > ssm_input.json
+          
+          aws ssm send-command \
+            --instance-ids "${{ secrets.ID_FRONTEND }}" \
+            --document-name "AWS-RunShellScript" \
+            --cli-input-json file://ssm_input.json
