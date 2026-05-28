@@ -7,7 +7,7 @@ export const TableCompras = () => {
   const [ventas, setVentas] = useState([]);
 
   const compras = async () => {
-    await axios.get("http://192.168.30/api/v1/ventas", {
+    await axios.get("/api/v1/ventas", {
       headers:{
         'Content-Type': 'application/json',
         'Accept': 'application/json'
@@ -17,6 +17,7 @@ export const TableCompras = () => {
       setVentas(response.data);
     });
   };
+
   // Llamada a la función para obtener los datos cuando el componente se monta
   useEffect(() => {
     compras();
@@ -27,6 +28,7 @@ export const TableCompras = () => {
 
   //state que abre el modal junto con la data del id seleccionado
   const [ventaSeleccionada, setVentaSeleccionada] = useState(null);
+
   const handleAbrirModal = (venta) => {
     setVentaSeleccionada(venta);
     setOpenModal(true);
@@ -47,6 +49,7 @@ export const TableCompras = () => {
                   <th className="pr-10"></th>
                 </tr>
               </thead>
+
               <tbody>
                 {ventas
                   .filter((venta) => !venta.despachoGenerado)
@@ -55,15 +58,19 @@ export const TableCompras = () => {
                       <td className="pr-10 py-10 items-center">
                         {venta.idVenta}
                       </td>
+
                       <td className="pr-10 py-10  items-center">
                         {venta.direccionCompra}
                       </td>
+
                       <td className="pr-10 py-10  items-center">
                         {venta.fechaCompra}
                       </td>
+
                       <td className="pr-10 py-10  items-center">
                         ${venta.valorCompra}
                       </td>
+
                       <td>
                         <button
                           onClick={() => handleAbrirModal(venta)}
@@ -79,6 +86,7 @@ export const TableCompras = () => {
           </div>
         </div>
       </section>
+
       <Modal
         onClose={() => {
           setOpenModal(false);

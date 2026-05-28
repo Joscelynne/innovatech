@@ -8,7 +8,7 @@ export const TableDespachos = () => {
 
   const despacho = async () => {
     await axios
-      .get("http://192.168.3.20/api/v1/despachos", {
+      .get("/api/v1/despachos", {
         headers:{
               'Content-Type': 'application/json',
               'Accept': 'application/json'
@@ -19,6 +19,7 @@ export const TableDespachos = () => {
         setDespachos(response.data);
       });
   };
+
   // Llamada a la función para obtener los datos cuando el componente se monta
   useEffect(() => {
     despacho();
@@ -49,32 +50,40 @@ export const TableDespachos = () => {
                   <th className="pr-10">Intentos de entrega</th>
                 </tr>
               </thead>
+
               <tbody>
-                {despachos
-               
-                .map((despacho) => (
+                {despachos.map((despacho) => (
                   <tr key={despacho.idDespacho}>
-                    <td className="pr-10 py-10 items-center">{despacho.idDespacho}</td>
+                    <td className="pr-10 py-10 items-center">
+                      {despacho.idDespacho}
+                    </td>
+
                     <td className="pr-10 py-10  items-center">
                       {despacho.idCompra}
                     </td>
+
                     <td className="pr-10 py-10  items-center">
                       {despacho.direccionCompra}
                     </td>
+
                     <td className="pr-10 py-10  items-center">
                       {despacho.fechaDespacho}
                     </td>
+
                     <td className="pr-10 py-10  items-center">
                       {despacho.patenteCamion}
                     </td>
+
                     <td className="pr-10 py-10  items-center">
                       {despacho.entregado
                         ? "Despacho entregado"
                         : "Despacho pendiente"}
                     </td>
+
                     <td className="pr-10 py-10  items-center">
                       {despacho.intento}
                     </td>
+
                     <td>
                       <button
                         onClick={() => handleAbrirModal(despacho)}
@@ -90,6 +99,7 @@ export const TableDespachos = () => {
           </div>
         </div>
       </section>
+
       <Modal
         onClose={() => {
           setOpenModal(false);
