@@ -3,8 +3,8 @@ name: CI/CD AWS ECR & EC2 Deployment
 on:
   push:
     branches:
-      - main
-  workflow_dispatch:
+      - deploy # Ejecuta el pipeline al hacer push a la rama deploy
+  workflow_dispatch: # Permite ejecución manual desde GitHub Actions
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
@@ -32,16 +32,19 @@ jobs:
 
       - name: Build & Push Backend Ventas
         run: |
-          docker build -t $ECR_REGISTRY/backend-venta:latest ./back-Ventas_SpringBoot/Springboot-API-REST
+          # Actualizamos la ruta para apuntar dentro de la subcarpeta Springboot-API-REST
+          docker build -t $ECR_REGISTRY/backend-venta:latest -f ./back-Ventas_SpringBoot/Springboot-API-REST/Dockerfile ./back-Ventas_SpringBoot/Springboot-API-REST
           docker push $ECR_REGISTRY/backend-venta:latest
 
       - name: Build & Push Backend Despachos
         run: |
-          docker build -t $ECR_REGISTRY/backend-despa:latest ./back-Despachos_SpringBoot/Springboot-API-REST-DESPACHO
+          # Asumiendo que la estructura es similar para Despachos
+          docker build -t $ECR_REGISTRY/backend-despa:latest -f ./back-Despachos_SpringBoot/Springboot-API-REST-DESPACHO/Dockerfile ./back-Despachos_SpringBoot/Springboot-API-REST-DESPACHO
           docker push $ECR_REGISTRY/backend-despa:latest
 
       - name: Build & Push Frontend
-       run: |
+        run: |
+          # Este parece estar correcto según tu imagen, directo en la raíz de front_despacho
           docker build -t $ECR_REGISTRY/frontend:latest -f ./front_despacho/Dockerfile ./front_despacho
           docker push $ECR_REGISTRY/frontend:latest
 
@@ -60,22 +63,13 @@ jobs:
 
       - name: Ejecutar despliegue vía AWS CLI (SSM)
         run: |
-          ECR_PASS=$(aws ecr get-login-password --region us-east-1)
-          
-          cat << EOF > deploy_backend.sh
+          # Creamos el script que se ejecutará dentro de la instancia EC2
+          cat << 'EOF' > deploy_backend.sh
           #!/bin/bash
-          # 1. Instalar Docker Compose automáticamente si no existe
-          mkdir -p /usr/local/lib/docker/cli-plugins
-          curl -sSL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-\$(uname -m) -o /usr/local/lib/docker/cli-plugins/docker-compose
-          chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-          
-          # 2. Login en ECR
-          echo "$ECR_PASS" | docker login --username AWS --password-stdin $ECR_REGISTRY
-          EOF
-          
-          cat << 'EOF' >> deploy_backend.sh
+          aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 861457109307.dkr.ecr.us-east-1.amazonaws.com
           mkdir -p /home/ec2-user/deploy-backend && cd /home/ec2-user/deploy-backend
-      
+          
+          # Generamos un docker-compose exclusivo para este servidor
           cat << 'YML' > docker-compose.yml
           version: '3.8'
           services:
@@ -113,7 +107,7 @@ jobs:
               container_name: back-despachos
               restart: always
               ports:
-                - "8081:8081"
+                - "8081:8080"
               environment:
                 - DB_ENDPOINT=db-mysql
                 - DB_PORT=3306
@@ -132,8 +126,10 @@ jobs:
           docker compose up -d
           EOF
 
-          jq -n --arg script "$(cat deploy_backend.sh)" '{"Parameters": {"commands": [$script]}}' > ssm_input.json 
-      
+          # Transformamos el script en un JSON seguro para inyectarlo en AWS CLI
+          jq -n --arg script "$(cat deploy_backend.sh)" '{"Parameters": {"commands": [$script]}}' > ssm_input.json
+          
+          # Enviamos el comando a la instancia a través del CLI de AWS
           aws ssm send-command \
             --instance-ids "${{ secrets.ID_BACKEND }}" \
             --document-name "AWS-RunShellScript" \
@@ -154,20 +150,9 @@ jobs:
 
       - name: Ejecutar despliegue vía AWS CLI (SSM)
         run: |
-          ECR_PASS=$(aws ecr get-login-password --region us-east-1)
-          
-          cat << EOF > deploy_frontend.sh
+          cat << 'EOF' > deploy_frontend.sh
           #!/bin/bash
-          # 1. Instalar Docker Compose automáticamente si no existe
-          mkdir -p /usr/local/lib/docker/cli-plugins
-          curl -sSL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-\$(uname -m) -o /usr/local/lib/docker/cli-plugins/docker-compose
-          chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-
-          # 2. Login en ECR
-          echo "$ECR_PASS" | docker login --username AWS --password-stdin $ECR_REGISTRY
-          EOF
-          
-          cat << 'EOF' >> deploy_frontend.sh
+          aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 861457109307.dkr.ecr.us-east-1.amazonaws.com
           mkdir -p /home/ec2-user/deploy-frontend && cd /home/ec2-user/deploy-frontend
           
           cat << 'YML' > docker-compose.yml
@@ -191,4 +176,4 @@ jobs:
           aws ssm send-command \
             --instance-ids "${{ secrets.ID_FRONTEND }}" \
             --document-name "AWS-RunShellScript" \
-            --cli-input-json file://ssm_input.json 
+            --cli-input-json file://ssm_input.json
