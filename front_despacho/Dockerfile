@@ -13,22 +13,16 @@ COPY . .
 RUN npm run build
 
 #etapa 2
-#creacion de la imagen
 FROM nginx:alpine AS production
-# crear usuario no root
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
-#copio los archivos compilados de la etapa 1 al directorio de nginx
-#se queda solamente el compilado y no el codigo fuente
+
+# copio los archivos compilados de la etapa 1 al directorio de nginx
 COPY --from=build /app/dist /usr/share/nginx/html
-#copio el archivo de configuracion de nginx
+# copio el archivo de configuracion de nginx
 COPY nginx.conf /etc/nginx/conf.d/default.conf
-# dar permisos
-RUN chown -R appuser:appgroup /usr/share/nginx/html
-# cambiar usuario
-USER appuser
-#exponemos el puerto 80
+
+# exponemos el puerto 80
 EXPOSE 80
-#comando para iniciar nginx
+# comando para iniciar nginx
 CMD ["nginx", "-g", "daemon off;"]
 
 
