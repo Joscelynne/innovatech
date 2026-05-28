@@ -45,8 +45,8 @@ jobs:
       - name: Build & Push Frontend
         run: |
           # Este parece estar correcto según tu imagen, directo en la raíz de front_despacho
-          docker build -t $ECR_REGISTRY/frontend:latest -f ./front_despacho/Dockerfile ./front_despacho
-          docker push $ECR_REGISTRY/frontend:latest
+          docker build -t $ECR_REGISTRY/frontend:${{ github.sha }} -f ./front_despacho/Dockerfile ./front_despacho
+          docker push $ECR_REGISTRY/frontend:${{ github.sha }}
 
   deploy-backend:
     name: 4 & 5. Despliegue en EC2 Backend (DB + Backends)
@@ -122,8 +122,14 @@ jobs:
           YML
           
           docker compose down
+
+          docker rm -f $(docker ps -aq) || true
+
+          docker image prune -af
+
           docker compose pull
-          docker compose up -d
+
+          docker compose up -d --force-recreate
           EOF
 
           # Transformamos el script en un JSON seguro para inyectarlo en AWS CLI
@@ -159,7 +165,7 @@ jobs:
           version: '3.8'
           services:
             frontend-app:
-              image: 861457109307.dkr.ecr.us-east-1.amazonaws.com/frontend:latest
+              image: 861457109307.dkr.ecr.us-east-1.amazonaws.com/frontend:${{ github.sha }}
               container_name: front-app
               restart: always
               ports:
