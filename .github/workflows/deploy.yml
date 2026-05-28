@@ -45,7 +45,7 @@ jobs:
       - name: Build & Push Frontend
         run: |
           # Este parece estar correcto según tu imagen, directo en la raíz de front_despacho
-          docker build -t $ECR_REGISTRY/frontend:${{ github.sha }} -f ./front_despacho/Dockerfile ./front_despacho
+          docker build --no-cache -t $ECR_REGISTRY/frontend:${{ github.sha }} -f ./front_despacho/Dockerfile ./front_despacho
           docker push $ECR_REGISTRY/frontend:${{ github.sha }}
 
   deploy-backend:
