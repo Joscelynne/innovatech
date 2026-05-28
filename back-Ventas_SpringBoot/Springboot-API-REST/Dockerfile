@@ -16,15 +16,12 @@ RUN mvn clean package -DskipTests
 #creacion de la imagen
 FROM eclipse-temurin:17-jre-alpine AS production
 # crear usuario no root
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+
 
 WORKDIR /app
 #copio el jar compilado de la etapa 1 al directorio de trabajo
 COPY --from=build /app/target/*.jar app.jar
-# permisos
-RUN chown -R appuser:appgroup /app
-# usar usuario no root
-USER appuser
+
 #exponemos el puerto 8080
 EXPOSE 8080
 #comando para iniciar la aplicacion
