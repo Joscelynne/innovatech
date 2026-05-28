@@ -77,74 +77,63 @@ jobs:
         run: |
           REGISTRY_URL="${{ steps.login-ecr.outputs.registry }}"
           
-          # Creamos el script con tu Docker Compose original
+          # Se usarán comandos nativos de docker para evitar dependencias de docker-compose en EC2
           cat << 'SCRIPT_EOF' > deploy_backend.sh
           #!/bin/bash
+          set -e
           aws ecr get-login-password --region __REGION__ | docker login --username AWS --password-stdin __REGISTRY__
-          mkdir -p /home/ec2-user/deploy-backend && cd /home/ec2-user/deploy-backend
           
-          cat << 'YML' > docker-compose.yml
-          version: '3.8'
-          services:
-            db-mysql:
-              image: mysql:8.0
-              container_name: innovatech-db
-              restart: always
-              environment:
-                - MYSQL_DATABASE=__DB_NAME__
-                - MYSQL_ROOT_PASSWORD=__DB_ROOT__
-                - MYSQL_USER=__DB_USER__
-                - MYSQL_PASSWORD=__DB_PWD__
-              ports:
-                - "3306:3306"
-              volumes:
-                - db_data:/var/lib/mysql
+          # Descargar últimas imágenes
+          docker pull __REGISTRY__/backend-venta:latest
+          docker pull __REGISTRY__/backend-despa:latest
+          
+          # Crear red y volúmenes si no existen
+          docker network create innovatech-net || true
+          docker volume create db_data || true
+          
+          # Detener contenedores anteriores de forma segura (sin fallar si no existen)
+          docker rm -f back-ventas back-despachos innovatech-db || true
+          
+          # 1. Levantar Base de Datos
+          docker run -d --name innovatech-db --restart always --network innovatech-net \
+            -v db_data:/var/lib/mysql \
+            -e MYSQL_DATABASE=__DB_NAME__ \
+            -e MYSQL_ROOT_PASSWORD=__DB_ROOT__ \
+            -e MYSQL_USER=__DB_USER__ \
+            -e MYSQL_PASSWORD=__DB_PWD__ \
+            -p 3306:3306 mysql:8.0
             
-            backend-ventas:
-              image: __REGISTRY__/backend-venta:latest
-              container_name: back-ventas
-              restart: always
-              ports:
-                - "8080:8080"
-              environment:
-                - DB_ENDPOINT=db-mysql
-                - DB_PORT=3306
-                - DB_NAME=__DB_NAME__
-                - DB_USERNAME=__DB_USER__
-                - DB_PASSWORD=__DB_PWD__
-              depends_on:
-                - db-mysql
-
-            backend-despachos:
-              image: __REGISTRY__/backend-despa:latest
-              container_name: back-despachos
-              restart: always
-              ports:
-                - "8081:8080"
-              environment:
-                - DB_ENDPOINT=db-mysql
-                - DB_PORT=3306
-                - DB_NAME=__DB_NAME__
-                - DB_USERNAME=__DB_USER__
-                - DB_PASSWORD=__DB_PWD__
-              depends_on:
-                - db-mysql
-
-          volumes:
-            db_data:
-          YML
+          # Esperar a que MySQL esté listo
+          echo "Esperando 15 segundos para la inicialización de MySQL..."
+          sleep 15
           
-          docker compose down
-          docker rm -f $(docker ps -aq) || true
+          # 2. Levantar Backend Ventas
+          docker run -d --name back-ventas --restart always --network innovatech-net \
+            -p 8080:8080 \
+            -e DB_ENDPOINT=innovatech-db \
+            -e DB_PORT=3306 \
+            -e DB_NAME=__DB_NAME__ \
+            -e DB_USERNAME=__DB_USER__ \
+            -e DB_PASSWORD=__DB_PWD__ \
+            __REGISTRY__/backend-venta:latest
+
+          # 3. Levantar Backend Despachos
+          docker run -d --name back-despachos --restart always --network innovatech-net \
+            -p 8081:8080 \
+            -e DB_ENDPOINT=innovatech-db \
+            -e DB_PORT=3306 \
+            -e DB_NAME=__DB_NAME__ \
+            -e DB_USERNAME=__DB_USER__ \
+            -e DB_PASSWORD=__DB_PWD__ \
+            __REGISTRY__/backend-despa:latest
+
+          # Limpiar imágenes antiguas no utilizadas
           docker image prune -af
-          docker compose pull
-          docker compose up -d --force-recreate
           SCRIPT_EOF
 
-          # Inyectamos las variables reales (Secrets y Registry) en el script
+          # Inyectamos las variables reales (Secrets y Registry)
           sed -i "s|__REGISTRY__|$REGISTRY_URL|g; s|__REGION__|${{ secrets.AWS_REGION }}|g; s|__DB_NAME__|${{ secrets.MYSQL_DATABASE }}|g; s|__DB_ROOT__|${{ secrets.MYSQL_ROOT_PASSWORD }}|g; s|__DB_USER__|${{ secrets.MYSQL_APP_USER }}|g; s|__DB_PWD__|${{ secrets.MYSQL_APP_PASSWORD }}|g" deploy_backend.sh
           
-          # Enviamos el comando de forma segura codificando en Base64
           COMMAND_ID=$(aws ssm send-command --instance-ids "${{ secrets.ID_BACKEND }}" --document-name "AWS-RunShellScript" --parameters "{\"commands\":[\"echo $(base64 -w 0 deploy_backend.sh) | base64 -d | bash\"]}" --query "Command.CommandId" --output text)
           
           if ! aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "${{ secrets.ID_BACKEND }}"; then
@@ -179,23 +168,20 @@ jobs:
           
           cat << 'SCRIPT_EOF' > deploy_frontend.sh
           #!/bin/bash
+          set -e
           aws ecr get-login-password --region __REGION__ | docker login --username AWS --password-stdin __REGISTRY__
-          mkdir -p /home/ec2-user/deploy-frontend && cd /home/ec2-user/deploy-frontend
           
-          cat << 'YML' > docker-compose.yml
-          version: '3.8'
-          services:
-            frontend-app:
-              image: __REGISTRY__/frontend:__TAG__
-              container_name: front-app
-              restart: always
-              ports:
-                - "80:80"
-          YML
+          docker pull __REGISTRY__/frontend:__TAG__
           
-          docker compose down
-          docker compose pull
-          docker compose up -d
+          # Detener contenedor anterior de forma segura
+          docker rm -f front-app || true
+          
+          # Levantar nuevo contenedor
+          docker run -d --name front-app --restart always -p 80:80 \
+            __REGISTRY__/frontend:__TAG__
+
+          # Limpiar imágenes antiguas no utilizadas
+          docker image prune -af
           SCRIPT_EOF
 
           # Inyectamos el TAG dinámico y la URL
