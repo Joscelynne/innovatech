@@ -1,187 +1,210 @@
-name: CI/CD INNOVATECH - Producción
+name: CI/CD AWS ECR & EC2 Deployment
 
 on:
   push:
-    branches: [ "deploy" ]
-  workflow_dispatch: # Mantenemos la opción de ejecutarlo manualmente de tu archivo original
+    branches:
+      - deploy
+  workflow_dispatch:
 
 env:
   IMAGE_TAG: ${{ github.sha }}
 
 jobs:
   # ==========================================
-  # ETAPA 1: BUILD & PUSH FRONTEND
+  # 1. BUILD & PUSH A ECR
   # ==========================================
-  build-frontend:
-    name: Build & Push Frontend
+  build-and-push:
+    name: Build & Push a ECR
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout del código
-      uses: actions/checkout@v4
+      - name: Checkout del código
+        uses: actions/checkout@v4
 
-    - name: Configurar credenciales AWS
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-        aws-region: ${{ secrets.AWS_REGION }}
+      - name: Configurar credenciales de AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-    - name: Login en Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v2
+      - name: Login en Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-    - name: Build & Push
-      env:
-        REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-      run: |
-        cd front_despacho
-        docker build -t $REGISTRY/innovatech-frontend:${{ env.IMAGE_TAG }} -t $REGISTRY/innovatech-frontend:latest .
-        docker push -a $REGISTRY/innovatech-frontend
+      - name: Build & Push Backend Ventas
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker build -t $REGISTRY/backend-venta:latest -f ./back-Ventas_SpringBoot/Springboot-API-REST/Dockerfile ./back-Ventas_SpringBoot/Springboot-API-REST
+          docker push $REGISTRY/backend-venta:latest
+
+      - name: Build & Push Backend Despachos
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker build -t $REGISTRY/backend-despa:latest -f ./back-Despachos_SpringBoot/Springboot-API-REST-DESPACHO/Dockerfile ./back-Despachos_SpringBoot/Springboot-API-REST-DESPACHO
+          docker push $REGISTRY/backend-despa:latest
+
+      - name: Build & Push Frontend
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker build --no-cache -t $REGISTRY/frontend:${{ env.IMAGE_TAG }} -f ./front_despacho/Dockerfile ./front_despacho
+          docker push $REGISTRY/frontend:${{ env.IMAGE_TAG }}
 
   # ==========================================
-  # ETAPA 2: BUILD & PUSH BACKEND (Corre en paralelo con Front)
+  # 2. DEPLOY EN EC2 BACKEND
   # ==========================================
-  build-backend:
-    name: Build & Push Backend
+  deploy-backend:
+    name: Despliegue en EC2 Backend (DB + Backends)
+    needs: build-and-push
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout del código
-      uses: actions/checkout@v4
+      - name: Configurar credenciales de AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-    - name: Configurar credenciales AWS
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-        aws-region: ${{ secrets.AWS_REGION }}
+      - name: Login en Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-    - name: Login en Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v2
+      - name: Ejecutar despliegue vía AWS CLI (SSM)
+        run: |
+          REGISTRY_URL="${{ steps.login-ecr.outputs.registry }}"
+          
+          # Creamos el script con tu Docker Compose original
+          cat << 'SCRIPT_EOF' > deploy_backend.sh
+          #!/bin/bash
+          aws ecr get-login-password --region __REGION__ | docker login --username AWS --password-stdin __REGISTRY__
+          mkdir -p /home/ec2-user/deploy-backend && cd /home/ec2-user/deploy-backend
+          
+          cat << 'YML' > docker-compose.yml
+          version: '3.8'
+          services:
+            db-mysql:
+              image: mysql:8.0
+              container_name: innovatech-db
+              restart: always
+              environment:
+                - MYSQL_DATABASE=__DB_NAME__
+                - MYSQL_ROOT_PASSWORD=__DB_ROOT__
+                - MYSQL_USER=__DB_USER__
+                - MYSQL_PASSWORD=__DB_PWD__
+              ports:
+                - "3306:3306"
+              volumes:
+                - db_data:/var/lib/mysql
+            
+            backend-ventas:
+              image: __REGISTRY__/backend-venta:latest
+              container_name: back-ventas
+              restart: always
+              ports:
+                - "8080:8080"
+              environment:
+                - DB_ENDPOINT=db-mysql
+                - DB_PORT=3306
+                - DB_NAME=__DB_NAME__
+                - DB_USERNAME=__DB_USER__
+                - DB_PASSWORD=__DB_PWD__
+              depends_on:
+                - db-mysql
 
-    - name: Build & Push - Ventas
-      env:
-        REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-      run: |
-        cd back-Ventas_SpringBoot/Springboot-API-REST
-        docker build -t $REGISTRY/innovatech-ventas:${{ env.IMAGE_TAG }} -t $REGISTRY/innovatech-ventas:latest .
-        docker push -a $REGISTRY/innovatech-ventas
+            backend-despachos:
+              image: __REGISTRY__/backend-despa:latest
+              container_name: back-despachos
+              restart: always
+              ports:
+                - "8081:8080"
+              environment:
+                - DB_ENDPOINT=db-mysql
+                - DB_PORT=3306
+                - DB_NAME=__DB_NAME__
+                - DB_USERNAME=__DB_USER__
+                - DB_PASSWORD=__DB_PWD__
+              depends_on:
+                - db-mysql
 
-    - name: Build & Push - Despachos
-      env:
-        REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-      run: |
-        cd back-Despachos_SpringBoot/Springboot-API-REST-DESPACHO
-        docker build -t $REGISTRY/innovatech-despachos:${{ env.IMAGE_TAG }} -t $REGISTRY/innovatech-despachos:latest .
-        docker push -a $REGISTRY/innovatech-despachos
+          volumes:
+            db_data:
+          YML
+          
+          docker compose down
+          docker rm -f $(docker ps -aq) || true
+          docker image prune -af
+          docker compose pull
+          docker compose up -d --force-recreate
+          SCRIPT_EOF
+
+          # Inyectamos las variables reales (Secrets y Registry) en el script
+          sed -i "s|__REGISTRY__|$REGISTRY_URL|g; s|__REGION__|${{ secrets.AWS_REGION }}|g; s|__DB_NAME__|${{ secrets.MYSQL_DATABASE }}|g; s|__DB_ROOT__|${{ secrets.MYSQL_ROOT_PASSWORD }}|g; s|__DB_USER__|${{ secrets.MYSQL_APP_USER }}|g; s|__DB_PWD__|${{ secrets.MYSQL_APP_PASSWORD }}|g" deploy_backend.sh
+          
+          # Enviamos el comando de forma segura codificando en Base64
+          COMMAND_ID=$(aws ssm send-command --instance-ids "${{ secrets.ID_BACKEND }}" --document-name "AWS-RunShellScript" --parameters "{\"commands\":[\"echo $(base64 -w 0 deploy_backend.sh) | base64 -d | bash\"]}" --query "Command.CommandId" --output text)
+          
+          if ! aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "${{ secrets.ID_BACKEND }}"; then
+            echo "❌ Error en el despliegue del Backend."
+            aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "${{ secrets.ID_BACKEND }}" --query "StandardErrorContent" --output text
+            exit 1
+          fi
 
   # ==========================================
-  # ETAPA 3: DEPLOY EN EC2 (Espera a las etapas 1 y 2)
+  # 3. DEPLOY EN EC2 FRONTEND
   # ==========================================
-  deploy:
-    name: Deploy to EC2 Instances
+  deploy-frontend:
+    name: Despliegue en EC2 Frontend (Solo Front)
+    needs: build-and-push
     runs-on: ubuntu-latest
-    # CRÍTICO: Este job SOLO arranca si el Front y los Backends terminaron con éxito
-    needs: [build-frontend, build-backend] 
-
     steps:
-    - name: Configurar credenciales AWS (Requerido para SSM)
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-        aws-region: ${{ secrets.AWS_REGION }}
+      - name: Configurar credenciales de AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-    - name: Login en Amazon ECR (Requerido para URL del Registry)
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v2
+      - name: Login en Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
 
-    - name: Desplegar Capa de Datos y Lógica (EC2_BACK_ID)
-      run: |
-        REGISTRY_URL="${{ steps.login-ecr.outputs.registry }}"
-        
-        cat << 'SCRIPT_EOF' > deploy_back.sh
-        set -e
-        mkdir -p /home/ec2-user/innovatech-prod && cd /home/ec2-user/innovatech-prod
+      - name: Ejecutar despliegue vía AWS CLI (SSM)
+        run: |
+          REGISTRY_URL="${{ steps.login-ecr.outputs.registry }}"
+          
+          cat << 'SCRIPT_EOF' > deploy_frontend.sh
+          #!/bin/bash
+          aws ecr get-login-password --region __REGION__ | docker login --username AWS --password-stdin __REGISTRY__
+          mkdir -p /home/ec2-user/deploy-frontend && cd /home/ec2-user/deploy-frontend
+          
+          cat << 'YML' > docker-compose.yml
+          version: '3.8'
+          services:
+            frontend-app:
+              image: __REGISTRY__/frontend:__TAG__
+              container_name: front-app
+              restart: always
+              ports:
+                - "80:80"
+          YML
+          
+          docker compose down
+          docker compose pull
+          docker compose up -d
+          SCRIPT_EOF
 
-        aws ecr get-login-password --region __REGION__ | docker login --username AWS --password-stdin __REGISTRY__
-        docker pull __REGISTRY__/innovatech-ventas:__TAG__
-        docker pull __REGISTRY__/innovatech-despachos:__TAG__
+          # Inyectamos el TAG dinámico y la URL
+          sed -i "s|__REGISTRY__|$REGISTRY_URL|g; s|__REGION__|${{ secrets.AWS_REGION }}|g; s|__TAG__|${{ env.IMAGE_TAG }}|g" deploy_frontend.sh
 
-        docker network create innovatech-net || true
-        docker volume create db_data || true
-
-        # Protección: Solo afecta a los contenedores del backend
-        docker rm -f backend-ventas backend-despachos db-mysql || true
-
-        # 1. Base de Datos
-        docker run -d --name db-mysql --restart unless-stopped --network innovatech-net \
-          -v db_data:/var/lib/mysql -e MYSQL_DATABASE=innovatech_db \
-          -e MYSQL_ROOT_PASSWORD=__ROOT_PWD__ -e MYSQL_USER=__APP_USER__ -e MYSQL_PASSWORD=__APP_PWD__ \
-          -p 3306:3306 mysql:8.0
-
-        # Race Condition: Esperar a MySQL
-        echo "Esperando 15 segundos para la inicialización de MySQL..."
-        until docker exec db-mysql mysqladmin ping -u root -p__ROOT_PWD__ --silent; do
-          echo "Esperando MySQL..."
-          sleep 2
-        done
-
-        # 2. Microservicios
-        docker run -d --name backend-ventas --restart unless-stopped --network innovatech-net \
-          -p 8080:8080 -e DB_ENDPOINT=db-mysql -e DB_PORT=3306 -e DB_NAME=innovatech_db \
-          -e DB_USERNAME=__APP_USER__ -e DB_PASSWORD=__APP_PWD__ \
-          __REGISTRY__/innovatech-ventas:__TAG__
-
-        docker run -d --name backend-despachos --restart unless-stopped --network innovatech-net \
-          -p 8081:8081 -e DB_ENDPOINT=db-mysql -e DB_PORT=3306 -e DB_NAME=innovatech_db \
-          -e DB_USERNAME=__APP_USER__ -e DB_PASSWORD=__APP_PWD__ \
-          __REGISTRY__/innovatech-despachos:__TAG__
-
-        # Limpieza segura
-        docker image prune -f
-        SCRIPT_EOF
-
-        sed -i "s|__REGISTRY__|$REGISTRY_URL|g; s|__TAG__|${{ env.IMAGE_TAG }}|g; s|__REGION__|${{ secrets.AWS_REGION }}|g; s|__ROOT_PWD__|${{ secrets.MYSQL_ROOT_PASSWORD }}|g; s|__APP_USER__|${{ secrets.MYSQL_APP_USER }}|g; s|__APP_PWD__|${{ secrets.MYSQL_APP_PASSWORD }}|g" deploy_back.sh
-        
-        COMMAND_ID=$(aws ssm send-command --instance-ids "${{ secrets.EC2_BACK_ID }}" --document-name "AWS-RunShellScript" --parameters "{\"commands\":[\"echo $(base64 -w 0 deploy_back.sh) | base64 -d | bash\"]}" --query "Command.CommandId" --output text)
-        
-        if ! aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "${{ secrets.EC2_BACK_ID }}"; then
-          echo "❌ Error en el despliegue del Backend. Detalles:"
-          aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "${{ secrets.EC2_BACK_ID }}" --query "StandardErrorContent" --output text
-          exit 1
-        fi
-
-    - name: Desplegar Capa de Presentación (EC2_FRONT_ID)
-      run: |
-        REGISTRY_URL="${{ steps.login-ecr.outputs.registry }}"
-        
-        cat << 'SCRIPT_EOF' > deploy_front.sh
-        set -e
-        mkdir -p /home/ec2-user/innovatech-prod && cd /home/ec2-user/innovatech-prod
-
-        aws ecr get-login-password --region __REGION__ | docker login --username AWS --password-stdin __REGISTRY__
-        docker pull __REGISTRY__/innovatech-frontend:__TAG__
-
-        # Protección: Solo borra el frontend
-        docker rm -f frontend-app || true
-
-        docker run -d --name frontend-app --restart unless-stopped -p 80:80 \
-          __REGISTRY__/innovatech-frontend:__TAG__
-
-        # Limpieza segura
-        docker image prune -f
-        SCRIPT_EOF
-
-        sed -i "s|__REGISTRY__|$REGISTRY_URL|g; s|__TAG__|${{ env.IMAGE_TAG }}|g; s|__REGION__|${{ secrets.AWS_REGION }}|g" deploy_front.sh
-        
-        COMMAND_ID=$(aws ssm send-command --instance-ids "${{ secrets.EC2_FRONT_ID }}" --document-name "AWS-RunShellScript" --parameters "{\"commands\":[\"echo $(base64 -w 0 deploy_front.sh) | base64 -d | bash\"]}" --query "Command.CommandId" --output text)
-        
-        if ! aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "${{ secrets.EC2_FRONT_ID }}"; then
-          echo "❌ Error en el despliegue del Frontend. Detalles:"
-          aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "${{ secrets.EC2_FRONT_ID }}" --query "StandardErrorContent" --output text
-          exit 1
-        fi
+          COMMAND_ID=$(aws ssm send-command --instance-ids "${{ secrets.ID_FRONTEND }}" --document-name "AWS-RunShellScript" --parameters "{\"commands\":[\"echo $(base64 -w 0 deploy_frontend.sh) | base64 -d | bash\"]}" --query "Command.CommandId" --output text)
+          
+          if ! aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "${{ secrets.ID_FRONTEND }}"; then
+            echo "❌ Error en el despliegue del Frontend."
+            aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "${{ secrets.ID_FRONTEND }}" --query "StandardErrorContent" --output text
+            exit 1
+          fi
